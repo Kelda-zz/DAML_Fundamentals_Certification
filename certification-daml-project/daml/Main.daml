@@ -1,0 +1,134 @@
+module Main where
+
+import DA.Optional
+
+type ClientAccountMusicStoreProposalId = ContractId ClientAccountMusicStoreProposal
+type ClientAccountMusicStoreId = ContractId ClientAccountMusicStore
+
+data ClientInfo = ClientInfo with
+  name: Text
+  address: Text
+  telephone : Text
+    deriving (Eq, Show)
+
+
+--This template is used to store client account store proposal
+
+template ClientAccountMusicStoreProposal
+    with
+        client                      : Party
+        storeAdmin                  : Party
+        clientInfo                  : ClientInfo
+        state                       : Text
+        note                        : Optional(Text)
+        id                          : Text
+
+    where
+        signatory client
+        observer storeAdmin
+        ensure client /= storeAdmin && clientInfo.name /=""
+
+        key(client,clientInfo)    : (Party, ClientInfo)
+        maintainer key._1
+
+
+    -- simply returns the ContractId of the current contract without archiving anything; can be used as a reminder if the proposal doesn't get either reviewed or Rejected for a while
+        nonconsuming choice Propose: ClientAccountMusicStoreProposalId 
+            controller client
+            do
+                return self
+
+    --This choice creates a new proposal to create an account in the store 
+
+        nonconsuming choice CreateAccountStoreProposal: ClientAccountMusicStoreProposalId
+            with
+                client                : Party
+                clientInfo            : ClientInfo
+            controller client 
+                do
+                    let 
+                        state = "Pending"
+                    create ClientAccountMusicStoreProposal with ..  
+
+
+    --This choice allows reject the proposal to create an account
+
+        choice RejectStoreAccountProposal: ClientAccountMusicStoreProposalId
+            with
+                reason: Optional(Text)
+            controller storeAdmin
+                do
+                create this with
+                    state = "Declined"
+                    note = reason
+
+    -- This choice allows the client to cancel the proposal
+
+        choice Cancel: ()
+            controller client
+            do
+                return ()
+
+   --This choice serves to review account store proposal
+       
+        choice ReviewAccountStore:  Optional (ClientAccountMusicStoreId)
+            controller storeAdmin 
+                do
+                    account <- lookupByKey @ClientAccountMusicStore (client, id)
+                    now <- getTime
+                    if (isSome account) then 
+                        return None
+                    else do
+                        assertMsg ("client cannot review their own proposal account ")(client /= storeAdmin)
+                        let 
+                            state = "Approved"
+                        account <- create ClientAccountMusicStore with                              
+                            createAccount = now
+                            ..
+                        return (Some account)
+
+    --This choice serves to create account store
+       
+        choice CreateAccountStore:  ClientAccountMusicStoreId
+            controller storeAdmin 
+                do
+                    assertMsg ("client cannot have Declined Status ")(state /= "Declined")
+                    let                    
+                        state = "Active"
+                    createAccount <- getTime
+                    create ClientAccountMusicStore with ..
+
+
+
+-- This template is used to store client accout store
+
+template ClientAccountMusicStore
+    with
+        client                      : Party
+        storeAdmin                  : Party
+        createAccount               : Time
+        clientInfo                  : ClientInfo
+        state                       : Text
+        id                          : Text
+
+    where
+        signatory client
+        observer storeAdmin
+        ensure client /= storeAdmin
+
+        key(client, id)    : (Party, Text)
+        maintainer key._1
+
+
+-- This template is used to store information
+
+template Store
+    with
+        storeAdmin                  : Party
+        name                        : Text
+        clients                     : [Party]
+    where
+        signatory storeAdmin
+        observer clients
+
+        ensure name /="" &&  storeAdmin `notElem` clients

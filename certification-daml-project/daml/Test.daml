@@ -1,0 +1,91 @@
+module Test where
+
+import Main
+import Setup
+import Daml.Script
+
+{-
+    Min 1 Full Scenario & Min 3 Happy Paths
+        + testCreateAccountProposal: client can create ClientAccountMusicStoreProposal contracts & storeAdmin can exercise can check  "Reject" or "Review"
+            1. client creates a ProjectProposal contract     
+        + testAccountProposal: client and storeAdmin can exercise ReviewAccountStore, RejectStoreAccountProposal, Cancel
+            2. storeAdmin exercises ReviewAccountStore to check client proposal and approve it
+            3. storeAdmin exercises RejectStoreAccountProposal with a reason: "Client had issues before in the store"
+            4. client exercises Cancel to cancel the proposal
+    Min 3 Unhappy Paths
+        - cantCreateNullName: client cannot create a Account Proposal without name
+        - cantReviewMyself: client cannot "Review" their own proposal account 
+        - cantCreateAccount: client cannot create an Account without store Admin approval and can't create if status is declined
+-}
+
+
+-- + testCreateAccountProposal: client can create ClientAccountMusicStoreProposal contracts & storeAdmin can exercise can check  "Reject" or "Review"
+testCreateAccountProposal = script do
+    (testParties@TestParties{..}, clientInfos@ClientInfos{..}, accountProposal1, accountProposal2, account2) <- setupAccounts
+    -- 1. client creates a ProjectProposal contract 
+    proposal3 <- submit client do
+        createCmd ClientAccountMusicStoreProposal with
+            client
+            storeAdmin
+            clientInfo = clientInfo3
+            state = "Pending"
+            note = None
+            id = "ZXV123"
+    return (testParties, clientInfos,accountProposal1, accountProposal2, proposal3)
+
+    -- + testAccountProposal: client and storeAdmin can exercise ReviewAccountStore, RejectStoreAccountProposal, Cancel
+testAccountProposal = script do
+    (testParties@TestParties{..}, clientInfos@ClientInfos{..}, accountProposal1, accountProposal2, proposal3) <- testCreateAccountProposal
+    clientAccs <- query @ClientAccountMusicStore client
+    -- 2. storeAdmin exercises ReviewAccountStore to check client proposal and approve it
+    checkClientAcc <- submit storeAdmin do
+        exerciseCmd proposal3 ReviewAccountStore
+
+    -- 3. storeAdmin exercises RejectStoreAccountProposal with a reason: "Client had issues before in the store"
+    rejectedProposal <- submit storeAdmin do
+        exerciseCmd accountProposal1 RejectStoreAccountProposal with
+            reason = Some "Client had issues before in the store"
+         
+    -- 4. client exercises Cancel to cancel the proposal
+    cancelledProposal <- submit client do
+        exerciseCmd accountProposal2 Cancel
+
+    return (testParties, clientInfos, checkClientAcc, rejectedProposal)            
+
+
+-- - cantCreateNullName: client cannot create a Account Proposal without name
+cantCreateNullName = script do
+    testParties@TestParties{..} <- setupTestParties
+
+    let
+        wrongdateClientInfo = ClientInfo with
+            name = ""
+            address = "Chelsea Street 230"
+            telephone = "000-000-178"  
+
+    submitMustFail client do
+        createCmd ClientAccountMusicStoreProposal with
+            client
+            storeAdmin
+            clientInfo = wrongdateClientInfo
+            state = ""
+            note = Some ""
+            id = ""
+             
+
+-- - cantReviewMyself: client cannot "Review" their own proposal account 
+cantReviewMyself = script do
+    (testParties@TestParties{..}, clientInfos@ClientInfos{..},accountProposal1, accountProposal2, checkClientAcc) <- testCreateAccountProposal
+    
+    submitMustFail client do
+        exerciseCmd accountProposal1 ReviewAccountStore
+        
+
+
+-- - cantCreateAccount: client cannot create an Account without store Admin approval and can't create if status is declined
+cantCreateAccomplishment = script do
+    (testParties@TestParties{..}, clientInfos@ClientInfos{..}, checkClientAcc, rejectedProposal) <- testAccountProposal
+
+    submitMustFail client do
+        exerciseCmd rejectedProposal CreateAccountStore 
+            

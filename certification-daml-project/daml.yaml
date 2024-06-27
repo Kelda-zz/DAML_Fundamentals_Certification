@@ -1,0 +1,10 @@
+sdk-version: 2.8.5
+name: certification-daml-project
+version: 0.1.0
+source: daml
+init-script: Setup:setupUsers
+dependencies:
+- daml-prim
+- daml-stdlib
+- daml-script
+

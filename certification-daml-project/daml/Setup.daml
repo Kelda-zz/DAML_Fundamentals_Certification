@@ -1,0 +1,92 @@
+module Setup where
+
+import Main
+import Daml.Script
+
+-- | A record containing all the parties that we will use in our script
+data TestParties = TestParties with
+    storeAdmin: Party
+    client: Party
+
+setupTestParties = script do
+    -- 1. Allocate parties with the given display name
+    storeAdmin <- allocatePartyWithHint "StoreAdmin" (PartyIdHint "SADMN")
+    client <- allocatePartyWithHint "Client" (PartyIdHint "CLIENT")
+
+    return TestParties with
+        storeAdmin
+        client
+
+setupUsers = script do 
+    (testParties@TestParties{..}, clientInfos@ClientInfos{..}) <- setupClientInfos
+
+    -- 2. Construct user-ids from text
+    storeAdminId <- validateUserId "StoreAdmin"   
+    aliceId <- validateUserId "Alice"
+    johnId <- validateUserId "John"
+
+ -- 3. Create users with the given rights 
+    createUser (User storeAdminId (Some storeAdmin)) [CanActAs storeAdmin]  
+    createUser (User aliceId (Some client)) [CanActAs client]
+    createUser (User johnId (Some client)) [CanActAs client]
+
+    submit client do
+        createCmd ClientAccountMusicStoreProposal with
+            storeAdmin
+            clientInfo = clientInfo1
+            client
+            state = "Pending"
+            note = None
+            id = "ZXV123"
+
+data ClientInfos = ClientInfos with
+    clientInfo1: ClientInfo
+    clientInfo2: ClientInfo
+    clientInfo3: ClientInfo
+
+setupClientInfos = script do
+    testParties@TestParties{..} <- setupTestParties
+
+    let
+        clientInfo1 = ClientInfo with
+          name = "Alice Smith"
+          address = "Cornelia Street 22"
+          telephone = "000-001-123"
+
+        clientInfo2 = ClientInfo with
+          name = "John Taylor"
+          address = "Down Street 34"
+          telephone = "000-001-124"
+
+        clientInfo3 = ClientInfo with
+          name = "Mary Swift"
+          address = "Kingston Street 13"
+          telephone = "000-001-125"
+
+    return (testParties, ClientInfos with {clientInfo1, clientInfo2, clientInfo3})
+
+setupAccounts = script do
+    (testParties@TestParties{..}, clientInfos@ClientInfos{..}) <- setupClientInfos
+    
+    accountProposal1 <- submit client do
+        createCmd ClientAccountMusicStoreProposal with
+            client
+            storeAdmin
+            clientInfo = clientInfo1
+            state = "Pending"
+            note = None
+            id = "ZXV345"
+
+    accountProposal2 <- submit client do
+        createCmd ClientAccountMusicStoreProposal with
+            client
+            storeAdmin
+            clientInfo = clientInfo2
+            state = "Pending"
+            note = None
+            id = "ZXV001"     
+
+    account2 <- submit client do
+        exerciseCmd accountProposal1 ReviewAccountStore  
+
+    return (testParties, clientInfos, accountProposal1, accountProposal2, account2)

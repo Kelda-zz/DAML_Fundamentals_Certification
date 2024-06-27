@@ -1,1 +1,0 @@
-# DAML_Fundamentals_Certification
