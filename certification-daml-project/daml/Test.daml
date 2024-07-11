@@ -3,89 +3,137 @@ module Test where
 import Main
 import Setup
 import Daml.Script
+import DA.Date
 
 {-
     Min 1 Full Scenario & Min 3 Happy Paths
-        + testCreateAccountProposal: client can create ClientAccountMusicStoreProposal contracts & storeAdmin can exercise can check  "Reject" or "Review"
-            1. client creates a ProjectProposal contract     
-        + testAccountProposal: client and storeAdmin can exercise ReviewAccountStore, RejectStoreAccountProposal, Cancel
-            2. storeAdmin exercises ReviewAccountStore to check client proposal and approve it
-            3. storeAdmin exercises RejectStoreAccountProposal with a reason: "Client had issues before in the store"
-            4. client exercises Cancel to cancel the proposal
+        + testCreateOrderProposal: client can create OrderProposal contracts & storeAdmin can exercise "checkOrders", "Reject" or "Review"
+            1. client creates a OrderProposal contract     
+        + testOrderProposal: client and storeAdmin can exercise Reject and Cancel
+            2. storeAdmin exercises "Reject" with a reason: "Product is no longer in stock"
+            3. client exercises Cancel to cancel the proposal
+        + testCreateOrder: storeAdmin can Review the proposal and approve it, this will create the order
+            4. storeAdmin exercises "ReviewOrderProposal" to check client proposal and approve it
+        + testShippingDate: storeAdmin can change the order status to Shipped, once the order is shipped
+            5. storeAdmin can exercise "CheckOrders" to check existing orders
+            6. storeAdmin exercises "UpdateOrderToShipped" to orders that are ready to shipp
+
     Min 3 Unhappy Paths
-        - cantCreateNullName: client cannot create a Account Proposal without name
-        - cantReviewMyself: client cannot "Review" their own proposal account 
-        - cantCreateAccount: client cannot create an Account without store Admin approval and can't create if status is declined
+        - cantCreateWithoutProducts: client cannot create a Order proposal if the product amounts is below zero
+        - cantReviewMyself: client cannot "Review" their own proposal order
+        - cantChangeShippedWithoutApproval: storeAdmin cant change the status to shipped if the order is not approved and the shipping must be bigger than the order date
 -}
 
 
--- + testCreateAccountProposal: client can create ClientAccountMusicStoreProposal contracts & storeAdmin can exercise can check  "Reject" or "Review"
-testCreateAccountProposal = script do
-    (testParties@TestParties{..}, clientInfos@ClientInfos{..}, accountProposal1, accountProposal2, account2) <- setupAccounts
-    -- 1. client creates a ProjectProposal contract 
-    proposal3 <- submit client do
-        createCmd ClientAccountMusicStoreProposal with
+-- + testCreateOrderProposal: client can create OrderProposal contracts & storeAdmin can exercise "checkOrder" cto either "Reject" or "Review"
+testCreateOrderProposal = script do
+    (testParties@TestParties{..}, orderInfos@OrderInfos{..}, orderProposal1, orderProposal2) <- setupOrders
+    -- 1. client creates a OrderProposal contract 
+    order3 <- submit client do
+        createCmd OrderProposal with
             client
             storeAdmin
-            clientInfo = clientInfo3
+            orderInfo = orderInfo3
             state = "Pending"
+            amountOfProducts = 1
             note = None
-            id = "ZXV123"
-    return (testParties, clientInfos,accountProposal1, accountProposal2, proposal3)
+            reference = "O003" 
+    return (testParties, orderInfos, orderProposal1, orderProposal2, order3)
 
-    -- + testAccountProposal: client and storeAdmin can exercise ReviewAccountStore, RejectStoreAccountProposal, Cancel
-testAccountProposal = script do
-    (testParties@TestParties{..}, clientInfos@ClientInfos{..}, accountProposal1, accountProposal2, proposal3) <- testCreateAccountProposal
-    clientAccs <- query @ClientAccountMusicStore client
-    -- 2. storeAdmin exercises ReviewAccountStore to check client proposal and approve it
-    checkClientAcc <- submit storeAdmin do
-        exerciseCmd proposal3 ReviewAccountStore
-
-    -- 3. storeAdmin exercises RejectStoreAccountProposal with a reason: "Client had issues before in the store"
+    -- + testOrderProposal: client and storeAdmin can exercise Reject and Cancel
+testOrderProposal = script do
+    (testParties@TestParties{..}, orderInfos@OrderInfos{..}, orderProposal1, orderProposal2, order3) <- testCreateOrderProposal
+    -- 2. storeAdmin exercises "Reject" with a reason: "Product is no longer in stock"
     rejectedProposal <- submit storeAdmin do
-        exerciseCmd accountProposal1 RejectStoreAccountProposal with
-            reason = Some "Client had issues before in the store"
-         
-    -- 4. client exercises Cancel to cancel the proposal
+        exerciseCmd orderProposal1 RejectOrderProposal with    
+            reason = Some "Product is no longer in stock"
+
+    -- 3. client exercises Cancel to cancel the proposal
     cancelledProposal <- submit client do
-        exerciseCmd accountProposal2 Cancel
+        exerciseCmd orderProposal2 Cancel
+    
 
-    return (testParties, clientInfos, checkClientAcc, rejectedProposal)            
+    return (testParties, orderInfos, order3, rejectedProposal)            
 
+-- + testCreateOrder: storeAdmin can Review the proposal and approve it, this will create the order
+testCreateOrder = script do 
+    (testParties@TestParties{..}, orderInfos@OrderInfos{..}, order3, rejectedProposal) <- testOrderProposal          
+    -- 4. storeAdmin exercises "ReviewOrderProposal" to check client proposal and approve it, storeAdmin can also review a rejectedProposal (Example, product is now in stock)
+    reviewedOrder <- submit storeAdmin do
+        exerciseCmd order3 ReviewOrderProposal
 
--- - cantCreateNullName: client cannot create a Account Proposal without name
-cantCreateNullName = script do
+    return(testParties, orderInfos, reviewedOrder, rejectedProposal)
+
+-- + testShippingDate: storeAdmin can change the order status to Shipped, once the order is shipped
+testShippingDate = script do
+    (testParties@TestParties{..}, orderInfos@OrderInfos{..}, Some reviewedOrder, rejectedProposal) <- testCreateOrder  
+    queryOrders <- query @Order storeAdmin
+    --5. storeAdmin can exercise "CheckOrders" to check existing orders
+    checkOrders <- submit storeAdmin do
+        exerciseCmd reviewedOrder CheckOrders with
+            orders = queryOrders
+
+    -- 6. storeAdmin exercises "UpdateOrderToShipped" to orders that are ready to shipp
+    shippedOrder <- submit storeAdmin do
+        exerciseCmd reviewedOrder UpdateOrderToShipped with
+            newShippingDate = date 2024 Jul 20
+
+    return(testParties, orderInfos, shippedOrder, checkOrders)
+
+-- - cantCreateWithoutProducts: client cannot create a Order proposal if the product amounts is below zero
+             
+cantCreateWithoutProducts = script do
     testParties@TestParties{..} <- setupTestParties
-
-    let
-        wrongdateClientInfo = ClientInfo with
-            name = ""
-            address = "Chelsea Street 230"
-            telephone = "000-000-178"  
+    let 
+        orderInfo4 = OrderInfo with
+            client = client
+            shippingAddress = "Chelsea Street 22"
+            product = "1989 CD"
+            orderDate = date 2024 Jul 08
+            shippingDate = date 2024 Jul 13
 
     submitMustFail client do
-        createCmd ClientAccountMusicStoreProposal with
+        createCmd OrderProposal with
             client
             storeAdmin
-            clientInfo = wrongdateClientInfo
-            state = ""
-            note = Some ""
-            id = ""
+            orderInfo = orderInfo4
+            state = "Pending"
+            amountOfProducts = 0
+            note = None
+            reference = "O003"
              
 
--- - cantReviewMyself: client cannot "Review" their own proposal account 
+-- - cantReviewMyself: client cannot "Review" their own proposal order 
 cantReviewMyself = script do
-    (testParties@TestParties{..}, clientInfos@ClientInfos{..},accountProposal1, accountProposal2, checkClientAcc) <- testCreateAccountProposal
+    (testParties@TestParties{..}, orderInfos@OrderInfos{..}, order3, rejectedProposal) <- testOrderProposal
     
     submitMustFail client do
-        exerciseCmd accountProposal1 ReviewAccountStore
+        exerciseCmd order3 ReviewOrderProposal
         
 
-
--- - cantCreateAccount: client cannot create an Account without store Admin approval and can't create if status is declined
+-- - cantChangeShippedWithoutApproval: storeAdmin cant change the status to shipped if the order is not approved and the shipping must be bigger than the order date
 cantCreateAccomplishment = script do
-    (testParties@TestParties{..}, clientInfos@ClientInfos{..}, checkClientAcc, rejectedProposal) <- testAccountProposal
+    (testParties@TestParties{..}, orderInfos@OrderInfos{..}, Some reviewedOrder, rejectedProposal) <- testCreateOrder
+    let 
+        orderInfo5 = OrderInfo with
+            client = client
+            shippingAddress = "NY Street 98"
+            product = "1989 CD"
+            orderDate = date 2024 Jul 08
+            shippingDate = date 2024 Jul 13
 
-    submitMustFail client do
-        exerciseCmd rejectedProposal CreateAccountStore 
+    now <- getTime 
+    wrongOrder <- submit storeAdmin do  
+        createCmd Order with
+            client    
+            storeAdmin 
+            orderInfo = orderInfo5
+            createOrder = now    
+            state = "Declined"
+            reference = "O001"
+
+
+    submitMustFail storeAdmin do
+        exerciseCmd wrongOrder UpdateOrderToShipped with
+            newShippingDate = date 2024 Jul 20
             

@@ -2,58 +2,44 @@ module Main where
 
 import DA.Optional
 
-type ClientAccountMusicStoreProposalId = ContractId ClientAccountMusicStoreProposal
-type ClientAccountMusicStoreId = ContractId ClientAccountMusicStore
 
-data ClientInfo = ClientInfo with
-  name: Text
-  address: Text
-  telephone : Text
+type OrderProposalId = ContractId OrderProposal
+type OrderId = ContractId Order
+
+data OrderInfo = OrderInfo with
+  client: Party
+  shippingAddress: Text
+  product: Text
+  orderDate : Date
+  shippingDate : Date
     deriving (Eq, Show)
 
 
---This template is used to store client account store proposal
+--This template is used to store client order proposal
 
-template ClientAccountMusicStoreProposal
+template OrderProposal
     with
         client                      : Party
         storeAdmin                  : Party
-        clientInfo                  : ClientInfo
+        orderInfo                   : OrderInfo
         state                       : Text
+        amountOfProducts            : Int
         note                        : Optional(Text)
-        id                          : Text
+        reference                   : Text
 
     where
         signatory client
         observer storeAdmin
-        ensure client /= storeAdmin && clientInfo.name /=""
+        ensure client /= storeAdmin && (orderInfo.orderDate < orderInfo.shippingDate) && amountOfProducts>0
 
-        key(client,clientInfo)    : (Party, ClientInfo)
+        key(client, orderInfo)    : (Party, OrderInfo)
         maintainer key._1
 
 
-    -- simply returns the ContractId of the current contract without archiving anything; can be used as a reminder if the proposal doesn't get either reviewed or Rejected for a while
-        nonconsuming choice Propose: ClientAccountMusicStoreProposalId 
-            controller client
-            do
-                return self
 
-    --This choice creates a new proposal to create an account in the store 
+    --This choice allows reject the proposal to create an order
 
-        nonconsuming choice CreateAccountStoreProposal: ClientAccountMusicStoreProposalId
-            with
-                client                : Party
-                clientInfo            : ClientInfo
-            controller client 
-                do
-                    let 
-                        state = "Pending"
-                    create ClientAccountMusicStoreProposal with ..  
-
-
-    --This choice allows reject the proposal to create an account
-
-        choice RejectStoreAccountProposal: ClientAccountMusicStoreProposalId
+        choice RejectOrderProposal: OrderProposalId
             with
                 reason: Optional(Text)
             controller storeAdmin
@@ -69,66 +55,72 @@ template ClientAccountMusicStoreProposal
             do
                 return ()
 
-   --This choice serves to review account store proposal
+   --This choice serves to review order store proposal
        
-        choice ReviewAccountStore:  Optional (ClientAccountMusicStoreId)
+        choice ReviewOrderProposal:  Optional (OrderId)
             controller storeAdmin 
                 do
-                    account <- lookupByKey @ClientAccountMusicStore (client, id)
+                    order <- lookupByKey @Order (client, reference)
                     now <- getTime
-                    if (isSome account) then 
+                    if (isSome order) then 
                         return None
                     else do
-                        assertMsg ("client cannot review their own proposal account ")(client /= storeAdmin)
+                        assertMsg ("client cannot review their own order proposal ")(client /= storeAdmin)
                         let 
                             state = "Approved"
-                        account <- create ClientAccountMusicStore with                              
-                            createAccount = now
+                        order <- create Order with                              
+                            createOrder = now
                             ..
-                        return (Some account)
+                        return (Some order)
+                    
 
-    --This choice serves to create account store
-       
-        choice CreateAccountStore:  ClientAccountMusicStoreId
-            controller storeAdmin 
-                do
-                    assertMsg ("client cannot have Declined Status ")(state /= "Declined")
-                    let                    
-                        state = "Active"
-                    createAccount <- getTime
-                    create ClientAccountMusicStore with ..
+-- This template is used to store client order
 
-
-
--- This template is used to store client accout store
-
-template ClientAccountMusicStore
+template Order
     with
         client                      : Party
         storeAdmin                  : Party
-        createAccount               : Time
-        clientInfo                  : ClientInfo
+        orderInfo                   : OrderInfo
+        createOrder                 : Time     
         state                       : Text
-        id                          : Text
+        reference                   : Text
 
-    where
-        signatory client
-        observer storeAdmin
-        ensure client /= storeAdmin
-
-        key(client, id)    : (Party, Text)
-        maintainer key._1
-
-
--- This template is used to store information
-
-template Store
-    with
-        storeAdmin                  : Party
-        name                        : Text
-        clients                     : [Party]
     where
         signatory storeAdmin
-        observer clients
+        observer client, storeAdmin
+        ensure client /= storeAdmin
 
-        ensure name /="" &&  storeAdmin `notElem` clients
+        key(storeAdmin, reference)    : (Party, Text)
+        maintainer key._1
+
+    -- This choice serves for the storeAdmin to check the list of orders so he can see their status and progress
+
+        nonconsuming choice CheckOrders: ([Text])
+            with
+                orders: [(ContractId Order, Order)]
+            controller storeAdmin
+            do
+                if null orders then return["No Orders"]
+                else do
+                    return $ map (\order -> "Order Reference: " <> order._2.reference <> " | Status: " <> order._2.state ) orders
+
+    -- This choice serves to update the shipping date and change the status to shipped
+        
+        choice UpdateOrderToShipped: OrderId
+            with
+                newShippingDate: Date
+            controller storeAdmin
+            do
+                assertMsg ("Order needs to be Approved to change status to shipped ")(state == "Approved")
+                assertMsg ("New shipping date cannot be before orderDate")(newShippingDate > orderInfo.orderDate)
+                let
+                    newOrderInfo = OrderInfo with
+                        client = orderInfo.client
+                        shippingAddress = orderInfo.shippingAddress
+                        product = orderInfo.product
+                        orderDate = orderInfo.orderDate
+                        shippingDate = newShippingDate
+                
+                create this with
+                    orderInfo = newOrderInfo
+                    state = "Shipped"

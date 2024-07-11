@@ -2,6 +2,7 @@ module Setup where
 
 import Main
 import Daml.Script
+import DA.Date
 
 -- | A record containing all the parties that we will use in our script
 data TestParties = TestParties with
@@ -18,7 +19,7 @@ setupTestParties = script do
         client
 
 setupUsers = script do 
-    (testParties@TestParties{..}, clientInfos@ClientInfos{..}) <- setupClientInfos
+    (testParties@TestParties{..}, orderInfos@OrderInfos{..}) <- setupOrderInfos
 
     -- 2. Construct user-ids from text
     storeAdminId <- validateUserId "StoreAdmin"   
@@ -31,62 +32,70 @@ setupUsers = script do
     createUser (User johnId (Some client)) [CanActAs client]
 
     submit client do
-        createCmd ClientAccountMusicStoreProposal with
-            storeAdmin
-            clientInfo = clientInfo1
+        createCmd OrderProposal with
             client
+            storeAdmin
+            orderInfo = orderInfo1       
             state = "Pending"
+            amountOfProducts = 2
             note = None
-            id = "ZXV123"
+            reference = "O000"
 
-data ClientInfos = ClientInfos with
-    clientInfo1: ClientInfo
-    clientInfo2: ClientInfo
-    clientInfo3: ClientInfo
+data OrderInfos = OrderInfos with
+    orderInfo1: OrderInfo
+    orderInfo2: OrderInfo
+    orderInfo3: OrderInfo
 
-setupClientInfos = script do
+setupOrderInfos = script do
     testParties@TestParties{..} <- setupTestParties
 
     let
-        clientInfo1 = ClientInfo with
-          name = "Alice Smith"
-          address = "Cornelia Street 22"
-          telephone = "000-001-123"
+        orderInfo1 = OrderInfo with
+          client = client
+          shippingAddress = "Down Street 34"
+          product = "Folklore CD"
+          orderDate = date 2024 Jul 10
+          shippingDate = date 2024 Jul 15
 
-        clientInfo2 = ClientInfo with
-          name = "John Taylor"
-          address = "Down Street 34"
-          telephone = "000-001-124"
+        orderInfo2 = OrderInfo with
+          client = client
+          shippingAddress = "Kingston Street 13"
+          product = "Evermore Vinyl"
+          orderDate = date 2024 Jul 09
+          shippingDate = date 2024 Jul 14
 
-        clientInfo3 = ClientInfo with
-          name = "Mary Swift"
-          address = "Kingston Street 13"
-          telephone = "000-001-125"
+        orderInfo3 = OrderInfo with
+          client = client
+          shippingAddress = "Cornelia Street 22"
+          product = "Lover Vinyl"
+          orderDate = date 2024 Jul 08
+          shippingDate = date 2024 Jul 13
+        
 
-    return (testParties, ClientInfos with {clientInfo1, clientInfo2, clientInfo3})
+    return (testParties, OrderInfos with {orderInfo1, orderInfo2, orderInfo3})
 
-setupAccounts = script do
-    (testParties@TestParties{..}, clientInfos@ClientInfos{..}) <- setupClientInfos
+setupOrders = script do
+    (testParties@TestParties{..}, orderInfos@OrderInfos{..}) <- setupOrderInfos
     
-    accountProposal1 <- submit client do
-        createCmd ClientAccountMusicStoreProposal with
+    orderProposal1 <- submit client do
+        createCmd OrderProposal with
             client
             storeAdmin
-            clientInfo = clientInfo1
+            orderInfo = orderInfo1
             state = "Pending"
+            amountOfProducts = 1
             note = None
-            id = "ZXV345"
+            reference = "O001"  
 
-    accountProposal2 <- submit client do
-        createCmd ClientAccountMusicStoreProposal with
+    orderProposal2 <- submit client do
+        createCmd OrderProposal with
             client
             storeAdmin
-            clientInfo = clientInfo2
+            orderInfo = orderInfo2
             state = "Pending"
+            amountOfProducts = 2
             note = None
-            id = "ZXV001"     
+            reference = "O002"
 
-    account2 <- submit client do
-        exerciseCmd accountProposal1 ReviewAccountStore  
 
-    return (testParties, clientInfos, accountProposal1, accountProposal2, account2)
+    return (testParties, orderInfos, orderProposal1, orderProposal2)
